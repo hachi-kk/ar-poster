@@ -4,154 +4,152 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111827">
-  <meta name="ar-version" content="3-stable-tracking">
-  <title>AR 海报体验</title>
-
+  <title>海报 AR 体验</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; font-family: system-ui, sans-serif; background: #111827; color: white; }
+    [hidden] { display: none !important; }
+    #welcome { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: #111827; }
+    .card { max-width: 380px; text-align: center; }
+    h1 { font-size: 28px; margin-bottom: 14px; }
+    p { line-height: 1.8; color: #cbd5e1; }
+    button { border: 0; border-radius: 12px; padding: 15px 26px; background: #38bdf8; color: #082f49; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #status { position: fixed; z-index: 10; top: max(18px, env(safe-area-inset-top)); left: 16px; right: 16px; margin: 0 auto; width: fit-content; max-width: calc(100% - 32px); padding: 12px 18px; border-radius: 14px; background: rgba(15,23,42,.82); text-align: center; font-size: 14px; pointer-events: none; }
+    #play { position: fixed; z-index: 15; bottom: max(28px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
+  </style>
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+</head>
+<body>
+  <div id="welcome">
+    <div class="card">
+      <h1>让海报动起来</h1>
+      <p id="intro" role="status">点击开始，允许摄像头访问，<br>再将手机对准完整海报。</p>
+      <button id="start" type="button" disabled>正在加载…</button>
+      <p>动画默认静音播放。<br>请保持光线充足，避免海报反光。</p>
+    </div>
+  </div>
+  <div id="status" role="status" hidden>请对准海报</div>
+  <button id="play" type="button" hidden>点击播放动画</button>
 
-  <style>
-    body { margin: 0; overflow: hidden; font-family: system-ui, sans-serif; }
-    #tips {
-      position: fixed;
-      top: calc(16px + env(safe-area-inset-top));
-      left: 16px;
-      right: 16px;
-      z-index: 10000;
-      padding: 14px 18px;
-      border-radius: 12px;
-      background: rgba(17, 24, 39, 0.88);
-      color: white;
-      text-align: center;
-      line-height: 1.6;
-    }
-    #status { margin: 0; font-size: 15px; }
-    #playButton {
-      margin-top: 10px;
-      padding: 10px 20px;
-      border: 0;
-      border-radius: 8px;
-      background: white;
-      color: #111827;
-      font: inherit;
-      cursor: pointer;
-    }
-    [hidden] { display: none !important; }
-  </style>
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no;"
+    color-space="sRGB"
+    renderer="colorManagement: true; alpha: true;"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+    <a-assets timeout="30000">
+      <video id="arVideo" src="./video.mp4" preload="auto" loop muted playsinline webkit-playsinline crossorigin="anonymous"></video>
+    </a-assets>
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    <a-entity id="target" mindar-image-target="targetIndex: 0">
+      <!-- 海报为 3840 × 2160，高宽比为 0.5625；视频建议使用同一比例。 -->
+      <a-video src="#arVideo" position="0 0 0.01" width="1" height="0.5625" material="shader: flat;"></a-video>
+    </a-entity>
+  </a-scene>
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      const scene = document.querySelector("a-scene");
-      const target = document.querySelector("#target");
-      const video = document.querySelector("#arVideo");
-      const status = document.querySelector("#status");
-      const playButton = document.querySelector("#playButton");
-      let targetVisible = false;
+    (() => {
+      const scene = document.querySelector('a-scene');
+      const video = document.querySelector('#arVideo');
+      const target = document.querySelector('#target');
+      const start = document.querySelector('#start');
+      const welcome = document.querySelector('#welcome');
+      const intro = document.querySelector('#intro');
+      const status = document.querySelector('#status');
+      const play = document.querySelector('#play');
+      let tracking = false;
+      let failed = false;
+      let starting = false;
 
-      const setStatus = (message) => { status.textContent = message; };
+      function showError(message) {
+        failed = true;
+        video.pause();
+        welcome.hidden = false;
+        status.hidden = true;
+        play.hidden = true;
+        intro.textContent = message;
+        start.disabled = false;
+        start.textContent = '重新加载';
+        scene.systems['mindar-image-system']?.stop();
+      }
 
-      // 在允许自动播放的浏览器中静音播放；被拦截时提供点击播放入口。
       async function playVideo() {
-        if (!targetVisible || document.hidden) return;
+        if (!tracking || document.hidden || failed) return;
         try {
           await video.play();
-          // 等待播放期间，用户可能已经把摄像头移开。
-          if (!targetVisible || document.hidden) {
-            video.pause();
-            return;
-          }
-          playButton.hidden = true;
-          setStatus("已识别海报 · 视频播放中");
+          if (!tracking || document.hidden || failed) video.pause();
+          play.hidden = true;
         } catch (error) {
-          if (!targetVisible || document.hidden) return;
-          if (error.name === "NotAllowedError") {
-            playButton.hidden = false;
-            setStatus("已识别海报，请点击播放");
-          } else {
-            setStatus("视频暂时无法播放，请检查 video.mp4 后刷新页面。");
+          if (tracking && !document.hidden && !failed) {
+            play.hidden = false;
+            status.textContent = '已识别海报，请点击下方按钮播放';
           }
         }
       }
 
-      target.addEventListener("targetFound", () => {
-        targetVisible = true;
+      start.addEventListener('click', async () => {
+        if (failed) { location.reload(); return; }
+        if (starting) return;
+        starting = true;
+        start.disabled = true;
+        start.textContent = '正在启动摄像头…';
+        intro.textContent = '请允许摄像头访问，首次加载需要一点时间。';
+        // 在用户点击时尝试解锁移动浏览器的视频播放权限。
+        video.muted = true;
+        video.play().then(() => { if (!tracking) video.pause(); }).catch(() => {});
+        try {
+          await scene.systems['mindar-image-system'].start();
+        } catch (error) {
+          showError('启动失败，请检查摄像头权限、网络和 targets.mind 文件，然后重新加载。');
+        }
+      });
+
+      scene.addEventListener('arReady', () => {
+        if (failed) return;
+        welcome.hidden = true;
+        status.hidden = false;
+        status.textContent = '摄像头已就绪，请对准完整海报';
+      });
+      scene.addEventListener('arError', () => {
+        showError('无法启动摄像头。请允许摄像头权限，使用 HTTPS 地址，并尝试在系统浏览器中打开。');
+      });
+      target.addEventListener('targetFound', () => {
+        tracking = true;
+        status.textContent = '已识别 · 动画播放中';
         playVideo();
       });
-
-      target.addEventListener("targetLost", () => {
-        targetVisible = false;
+      target.addEventListener('targetLost', () => {
+        tracking = false;
         video.pause();
         if (video.readyState > 0) video.currentTime = 0;
-        playButton.hidden = true;
-        setStatus("请将摄像头对准海报");
+        play.hidden = true;
+        status.textContent = '请重新对准海报';
       });
-
-      scene.addEventListener("arReady", () => {
-        setStatus("请将摄像头对准海报");
+      play.addEventListener('click', playVideo);
+      video.addEventListener('error', () => {
+        showError('视频加载失败。请确认同一文件夹内有 video.mp4，并建议使用 H.264 编码的 MP4。');
       });
-
-      scene.addEventListener("arError", () => {
-        video.pause();
-        setStatus("AR 启动失败，请检查摄像头权限，并使用手机浏览器打开 HTTPS 网页。");
-      });
-
-      video.addEventListener("error", () => {
-        setStatus("视频加载失败，请确认同一文件夹中有可播放的 video.mp4。");
-      });
-
-      playButton.addEventListener("click", playVideo);
-
-      document.addEventListener("visibilitychange", () => {
+      document.addEventListener('visibilitychange', () => {
         if (document.hidden) video.pause();
-        else if (targetVisible) playVideo();
+        else playVideo();
       });
 
-      if (location.protocol === "file:" || !window.isSecureContext) {
-        setStatus("请部署到 HTTPS 网站后，用手机浏览器打开；直接双击此文件无法测试 AR。");
-      } else if (!window.AFRAME || !window.MINDAR) {
-        setStatus("AR 组件加载失败，请检查网络后刷新页面。");
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        showError('摄像头需要 HTTPS 网站或电脑 localhost。请将整个 ar 文件夹部署后，用手机打开 HTTPS 地址；不要直接双击 HTML 测试。');
+      } else if (!window.AFRAME || !window.MINDAR || !AFRAME.components['mindar-image']) {
+        showError('AR 组件未加载，请检查网络是否能访问 aframe.io 和 cdn.jsdelivr.net，然后重新加载。');
+      } else {
+        const ready = () => {
+          if (failed) return;
+          start.disabled = false;
+          start.textContent = '开始体验';
+        };
+        if (scene.hasLoaded) ready();
+        else scene.addEventListener('loaded', ready, { once: true });
       }
-    });
+    })();
   </script>
-</head>
-
-<body>
-  <div id="tips">
-    <p id="status" role="status" aria-live="polite">正在启动 AR，请允许使用摄像头……</p>
-    <button id="playButton" type="button" hidden>播放视频</button>
-  </div>
-
-  <a-scene
-    mindar-image="imageTargetSrc: ./targets.mind; filterMinCF: 0.001; filterBeta: 0.01; warmupTolerance: 5; missTolerance: 10;"
-    color-space="sRGB"
-    renderer="colorManagement: true;"
-    vr-mode-ui="enabled: false"
-    device-orientation-permission-ui="enabled: false"
-  >
-    <a-assets>
-      <video
-        id="arVideo"
-        src="./video.mp4"
-        preload="auto"
-        loop
-        muted
-        playsinline
-        webkit-playsinline
-      ></video>
-    </a-assets>
-
-    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-
-    <a-entity id="target" mindar-image-target="targetIndex: 0">
-      <!-- 当前海报为 2160 × 3840（9:16）。height = 海报高度 / 海报宽度。 -->
-      <!-- AE 视频应与海报保持相同宽高比。 -->
-      <a-video
-        src="#arVideo"
-        position="0 0 0.01"
-        width="1"
-        height="1.777778"
-      ></a-video>
-    </a-entity>
-  </a-scene>
 </body>
 </html>
