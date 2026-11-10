@@ -21,13 +21,14 @@ jobs:
         uses: actions/checkout@v6
       - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Prepare current website
+      - name: Prepare netis poster and restore original video
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p _site
-          cp index.html poster.jpg targets.mind video.mp4 _site/
-          echo 'c25fb31c83c46f11d55d05e928160d71bb878ea9c776c8d2988cc57d54fc62d1  _site/video.mp4' | sha256sum --check
+          cp index.html poster.jpg targets.mind _site/
+          cat video.mp4.part-01 video.mp4.part-02 > _site/video.mp4
+          echo '85991cfd70f13df7bdea0f956a1a9ba6e92f6be375d88153a357f248bc2251fe  _site/video.mp4' | sha256sum --check
       - name: Upload website
         uses: actions/upload-pages-artifact@v4
         with:
